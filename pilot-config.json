@@ -12,5 +12,5 @@
     "health"
   ],
   "fail_ci": null,
-  "fail_deploy": "post-migrate-build"
+  "fail_deploy": null
 }
