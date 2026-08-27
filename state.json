@@ -1,7 +1,7 @@
 {
-  "deployed_sha": "57ec0c5cb9cb302bec59e97e4511cc63d92ec1af",
-  "schema_version": "57ec0c5cb9cb302bec59e97e4511cc63d92ec1af",
-  "last_result": "success",
-  "run_id": "33078320727",
-  "ts": "2026-08-27T13:43:30Z"
+  "deployed_sha": "not-advanced",
+  "schema_version": "2128eaa1bffbb6dd796c486129ea98581a141e12",
+  "last_result": "failure",
+  "run_id": "33079039477",
+  "ts": "2026-08-27T13:51:29Z"
 }
