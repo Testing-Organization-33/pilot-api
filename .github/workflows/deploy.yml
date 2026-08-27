@@ -102,8 +102,42 @@ jobs:
             '{deployed_sha:$d, schema_version:$s, last_result:$r, run_id:$run, ts:$ts}' > state.json
 
           cat state.json >> "$GITHUB_STEP_SUMMARY"
+
+          # Self-documenting: a stray branch holding one JSON file with no shared history is
+          # genuinely confusing to stumble on, and this one is protected against deletion.
+          cat > README.md <<'MD'
+# deploy-state (machine-written)
+
+This is an **orphan branch**. It shares no history with the code and holds no source — only
+`state.json`, rewritten by the `Deploy to Prod` workflow once per deploy.
+
+**Do not edit it by hand and do not merge it anywhere.** It is not a release; it is a record of what
+the last deploy left running. One commit per deploy, appended forever, on this one branch — no branch
+is created per release.
+
+## state.json
+
+| Field | Meaning |
+|---|---|
+| `deployed_sha` | Code actually serving. `not-advanced` means the deploy failed before the service reloaded. |
+| `schema_version` | Commit whose migrations were applied. `n/a` where the repo has no migrations. |
+| `last_result` | Conclusion of the deploy run that wrote this. |
+| `run_id` | The Actions run, for logs. |
+| `ts` | When it was written, UTC. |
+
+**`deployed_sha` and `schema_version` disagreeing is the point.** If the schema advanced and the code
+did not, production is running old code against a new schema and no code rollback fixes it. The
+release-rollback skill in the infra repo reads exactly this to detect that case.
+
+This file is a workflow's *belief* about production, not production itself. The authoritative version
+is a version field on the service's own `/health`; this branch is the stand-in until that exists.
+
+Protected against deletion and non-fast-forward: the rollback runbook trusts it, so it is corrected
+by committing forward, never by rewriting.
+MD
+
           git config user.name "pilot-deploy"
           git config user.email "pilot-deploy@users.noreply.github.com"
-          git add state.json
+          git add state.json README.md
           git commit -m "deploy state: ${{ job.status }} @ $DEPLOYED" || exit 0
           git push origin HEAD:deploy-state
