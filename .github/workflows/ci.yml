@@ -1,0 +1,38 @@
+name: CI
+on:
+  push:
+    branches: [development]
+  pull_request:
+    branches: [development, main]
+  workflow_dispatch:
+
+# Two required-check contexts, mirroring dash-backend-global's multi-check gate.
+# Both read pilot-config.json so a red run can be armed deliberately (rehearsal 4).
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run unit tests
+        run: |
+          FAIL=$(jq -r '.fail_ci // "null"' pilot-config.json)
+          echo "armed failure: $FAIL"
+          if [ "$FAIL" = "unit-tests" ]; then
+            echo "::error::unit-tests failed (armed via pilot-config.json)"
+            exit 1
+          fi
+          echo "unit-tests passed"
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          FAIL=$(jq -r '.fail_ci // "null"' pilot-config.json)
+          if [ "$FAIL" = "build" ]; then
+            echo "::error::build failed (armed via pilot-config.json)"
+            exit 1
+          fi
+          echo "build passed"

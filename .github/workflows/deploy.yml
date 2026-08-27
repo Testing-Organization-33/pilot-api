@@ -1,0 +1,109 @@
+name: Deploy to Prod
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit/tag to deploy. Empty = current main. This is the deploy-by-ref input the real repos lack."
+        required: false
+        default: ""
+
+# Imitates dash-backend-global/.github/workflows/Deploy-to-API-Prod.yml, including its
+# migrate-before-build ordering hazard: a build failure after migrations leaves the
+# service on OLD CODE + NEW SCHEMA with no rollback. Rehearsal 7 arms this deliberately.
+#
+# Unlike the real workflow, this one accepts a `ref` input (deploy-by-ref) so the
+# rollback-without-history-rewrite path can be exercised.
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Resolve target
+        id: target
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "### Deploying \`$SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "ref input: '${{ inputs.ref }}'" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Migrate database
+        id: migrate
+        run: |
+          set -e
+          FAIL=$(jq -r '.fail_deploy // "null"' pilot-config.json)
+          if [ "$FAIL" = "migrate" ]; then
+            echo "::error::prisma:deploy failed (armed via pilot-config.json)"
+            exit 1
+          fi
+          COUNT=$(ls -1 migrations/ 2>/dev/null | wc -l | tr -d ' ')
+          echo "migrations applied; schema now at $COUNT files"
+          echo "SCHEMA ADVANCED to ${{ steps.target.outputs.sha }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build
+        run: |
+          set -e
+          FAIL=$(jq -r '.fail_deploy // "null"' pilot-config.json)
+          if [ "$FAIL" = "post-migrate-build" ]; then
+            echo "::error::build failed AFTER migrations ran - service still on old code, schema already advanced. This is the unrollbackable state."
+            echo "**HAZARD**: schema advanced, code did NOT. Old process still serving." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "build ok"
+
+      - name: Reload service
+        id: reload
+        run: echo "service reloaded on ${{ steps.target.outputs.sha }}"
+
+      - name: Health check
+        run: |
+          FAIL=$(jq -r '.fail_deploy // "null"' pilot-config.json)
+          if [ "$FAIL" = "health" ]; then
+            echo "::error::failed /health after deploy (crash-looping on boot)"
+            exit 1
+          fi
+          echo "healthy"
+
+      - name: Publish deploy state
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          # Observable prod state on the `deploy-state` branch, so a half-applied deploy
+          # is inspectable. schema_version advances when migrations ran; deployed_sha only
+          # advances when the reload actually happened. They diverge in rehearsal 7.
+          SCHEMA="unchanged"
+          [ "${{ steps.migrate.outcome }}" = "success" ] && SCHEMA="${{ steps.target.outputs.sha }}"
+          DEPLOYED="not-advanced"
+          [ "${{ steps.reload.outcome }}" = "success" ] && DEPLOYED="${{ steps.target.outputs.sha }}"
+
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          TMP=$(mktemp -d)
+          if git clone --depth 1 --branch deploy-state "$REMOTE" "$TMP" 2>/dev/null; then
+            cd "$TMP"
+          else
+            git clone --depth 1 "$REMOTE" "$TMP"
+            cd "$TMP"
+            git checkout --orphan deploy-state
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          jq -n --arg d "$DEPLOYED" --arg s "$SCHEMA" --arg r "${{ job.status }}" \
+                --arg run "${{ github.run_id }}" --arg ts "$(date -u +%FT%TZ)" \
+            '{deployed_sha:$d, schema_version:$s, last_result:$r, run_id:$run, ts:$ts}' > state.json
+
+          cat state.json >> "$GITHUB_STEP_SUMMARY"
+          git config user.name "pilot-deploy"
+          git config user.email "pilot-deploy@users.noreply.github.com"
+          git add state.json
+          git commit -m "deploy state: ${{ job.status }} @ $DEPLOYED" || exit 0
+          git push origin HEAD:deploy-state
