@@ -1,7 +1,16 @@
 {
   "_comment": "Pilot failure toggle. Commit a change here to arm the next failure, then push to development.",
-  "_fail_ci_values": [null, "unit-tests", "build"],
-  "_fail_deploy_values": [null, "migrate", "post-migrate-build", "health"],
-  "fail_ci": null,
+  "_fail_ci_values": [
+    null,
+    "unit-tests",
+    "build"
+  ],
+  "_fail_deploy_values": [
+    null,
+    "migrate",
+    "post-migrate-build",
+    "health"
+  ],
+  "fail_ci": "unit-tests",
   "fail_deploy": null
 }
