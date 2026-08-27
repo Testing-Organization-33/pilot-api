@@ -11,6 +11,6 @@
     "post-migrate-build",
     "health"
   ],
-  "fail_ci": "unit-tests",
+  "fail_ci": null,
   "fail_deploy": null
 }
